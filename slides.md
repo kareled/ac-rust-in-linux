@@ -1,6 +1,6 @@
 ---
 marp: true
-footer: %Výchozí zápatí, které se objeví na každém slidu%
+footer: Rust in Linux kernel
 ---
 <!-- Barvou nadpisů první a druhé úrovně je _tmavá zelená_ z vizuálního stylu
 používaného do r. 2025. Nová tmavá zelená je na většíně projektorů špatně vidět.
@@ -35,182 +35,203 @@ img[alt~="title-image"] {
 
 ![logo](img/edhouse_logo.png)
 
-# %Titulek prezentace%
+# Rust in Linux kernel
 
-![title-image](./img/image_placeholder.svg)
-
-%Podtitulek, pokud je potřeba%
+What. Where. And why at all!
 
 ---
 
-<!-- Odtud začínají být vidět čísla slidů -->
-<!-- paginate: true -->
+## Linux, what is it?
+
+![logo](img/edhouse_logo.png)
+![bg right:33% width:300px](img/LinuxCon_Europe_Linus_Torvalds_03_(cropped).jpg)
+
+- kernel. Only kernel!
+- first version 1991 (Linus Torvalds)
+- open source/free software project with GPLv2 license
+- last version 6.14-rc6, March 9, 2025
+- 25 millions lines of C code
+---
+
+## Why Rust for kernel?
+
+because of security related issues. Let's see some statistics (2020)
+
+- 60-70% of security bugs in Ubuntu kernel are memory related (unsafe memory handling)
+- 65% of Android and Chrome in Android are use-after-free, double-free and heap buffer overflows
+- 71% of all macOS vulnerabilities are caused by memory unsafety
+- ~70% of M$ vulnerabilities (CVEs) are memory safety issues
+
+source: https://alexgaynor.net/2020/may/27/science-on-memory-unsafety-and-security/
 
 ![logo](img/edhouse_logo.png)
 
-## %Agenda%
 
-%Bod krátkého vysvětlení o čem bude tato prezentace%
+---
+## Rust in Linux history
 
-%Bod krátkého vysvětlení o čem bude tato prezentace%
+![logo](img/edhouse_logo.png)
 
-%Bod krátkého vysvětlení o čem bude tato prezentace%
+- started as a hobby project in 2013
+  https://github.com/tsgates/rust.ko  
+- serious talks started during 2020 on Linux Plumbers Conference
+- first commit of real Rust code happened during 2021
+- toolchain issue: Linux kernel likes GNU C, while Rust is based on LLVM
+  - solved by hacking kernel to be Clang/LLVM friendly and compilable.
+  ```
+  $ make LLVM=1
+  ```
 
-1. %Titulek části prezentace%
-2. %Titulek části prezentace%
-3. %Titulek části prezentace%
+---
+## Rust in Linux as of 2025
+
+![logo](img/edhouse_logo.png)
+
+- 11k lines of code!
+- why so little?
+  - no drivers (except reference)
+  - no internals
+  - few examples
+  - *just* C to Rust manual *bindings* and *abstractions*!
+  - bindgen generated bindings are 180k lines of Rust code!
+
+---
+## Rust in Linux development policy
+
+![logo](img/edhouse_logo.png)
+
+```
+
+                                                rust/bindings/
+                                               (rust/helpers/)
+
+                                                   include/ -----+ <-+
+                                                                 |   |
+  drivers/              rust/kernel/              +----------+ <-+   |
+    fs/                                           | bindgen  |       |
+   .../            +-------------------+          +----------+ --+   |
+                   |    Abstractions   |                         |   |
++---------+        | +------+ +------+ |          +----------+   |   |
+| my_foo  | -----> | | foo  | | bar  | | -------> | Bindings | <-+   |
+| driver  |  Safe  | | sub- | | sub- | |  Unsafe  |          |       |
++---------+        | |system| |system| |          | bindings | <-----+
+     |             | +------+ +------+ |          |  crate   |       |
+     |             |   kernel crate    |          +----------+       |
+     |             +-------------------+                             |
+     |                                                               |
+     +------------------# FORBIDDEN #--------------------------------+
+```
+
 
 ---
 
-<!-- _footer: %Speciální zápatí pro tento slide, např. linkedin username% -->
 
 ![logo](img/edhouse_logo.png)
 
-![bg width:350px left:33%](./img/portrait_placeholder.svg)
-
-## %Autor%
-
-<style>
-img[alt~="author-secondary"] {
-  position: absolute;
-  top: 450px;
-  right: 100px;
-  width: 200px
-}
-</style>
-
-- %Bod představení autora%
-- %Bod představení autora%
-- %Bod představení autora%
-- %Bod představení autora%
-
-![author-secondary](./img/image_placeholder.svg)
-
----
-
-## %Slide s obrázkem a textem%
-
-%Prvních několik bodů%:
-
-- %Bod%
-- %Bod%
-- %Bod%
-
-%Dalších několik bodů%:
-
-- %Bod%
-- %Bod%
-- %Bod%
-
-![bg left:33% width:300px](img/image_placeholder.svg)
-![logo](img/edhouse_logo.png)
-
----
-
-<style>
-img[alt~="qr"] {
-  position: absolute;
-  top: 240px;
-  right: 500px;
-  width: 250px
-}
-</style>
-
-![logo](img/edhouse_logo.png)
-
-## 1. %Titulek části prezentace%
-
-%Podtitulek, pokud je potřeba%
-
----
-
-![logo](img/edhouse_logo.png)
-
-## %Slide pouze s kódem%
+## Example
 
 ```rust
-fn f(n_container: Arc<Mutex<i32>>) {
-    let mut n_ref = n_container.lock().expect("Lock is not poisoned");
-    *n_ref += 1;
+pub struct Page {
+    page: NonNull<bindings::page>,
 }
-
-fn main() {
-    let n_container = Arc::new(Mutex::new(0i32));
-    let container_clone = n_container.clone();
-    let my_thread = std::thread::spawn(move || {
-        f(container_clone);
-    });
-    _ = my_thread.join();
-    let n_ref = n_container.lock().expect("Lock not poisoned");
-    println!("{}", *n_ref);
+[...]
+impl Page {
+  [...]
+  pub fn alloc_page(flags: Flags) -> Result<Self, AllocError> {
+    // SAFETY: Depending on the value of `gfp_flags`, this call may sleep. Other than that, it
+    // is always safe to call this method.
+    let page = unsafe { bindings::alloc_pages(flags.as_raw(), 0) };
+    let page = NonNull::new(page).ok_or(AllocError)?;
+    // INVARIANT: We just successfully allocated a page, so we now have ownership of the newly
+    // allocated page. We transfer that ownership to the new `Page` object.
+    Ok(Self { page })
+  }
 }
 ```
 
 ---
 
-## %Slide pouze s textem%
+## What do we need for Hello World like example?
 
 ![logo](img/edhouse_logo.png)
 
-- %První bod textu%
-- %Druhý bod textu%
-- %Bod s pododrážkami%
-  - %První pododrážka, kde jsou i výrazy z kódu jako `while`, `int` a `foreach`%
-  - %Druhá pododrážka, kde jsou i emoji 🎤, 🔊, 💯%
-- %Poslední bod textu%
+- compile own kernel! :-)
+- let's make it as easy as possible
+  - use distribution with up-to-date tools (Debian Testing to the rescue!)
+  - install all required tools from distribution repository
+  ```
+  $ sudo apt install rustc rust-src bindgen rustfmt rust-clippy
+  ```    
+  - obtain kernel source code, preferably from github.com mirror
+  ```
+  $ git clone https://github.com/torvalds/linux.git
+  ```
+  - make coffee, it takes some time, ... to git load 6GB of data
 
----
-
-## %Slide s textem a plovoucím obrázkem%
-
-![logo](img/edhouse_logo.png)
-
-<style>
-img[alt~="floating-image"] {
-  position: absolute;
-  top: 390px;
-  right: 140px;
-  width: 250px
-}
-</style>
-
-- %První bod textu%
-- %Druhý bod textu%
-- %Bod s pododrážkami%
-  - %První pododrážka
-  - %Druhá pododrážka
-- %Poslední bod textu%
-
-![floating-image](./img/image_placeholder.svg)
 
 ---
 
 ![logo](img/edhouse_logo.png)
 
-## %Slide s kódem a textem%
+## Demo Time!
 
-```rust
-#[derive(Serialize)]
-struct BeepEventData {
-    counter_value: u32,
-}
+- verify toolchain is there: `# make LLVM=1 rustavailable`
+- configuration: `# make LLVM=1 menuconfig`
+- compilation: `# make LLVM=1 -j14`
+- installation: `# make LLVM=1 modules_install install`
+
+---
+
+![logo](img/edhouse_logo.png)
+
+## Demo Time!
+
+- I'm cheating! Due to time required for compilation (40 minutes!)
+  I've already compiled both kernel and modules and also installed it
+
+- hence I'll recompile/reinstall only rust modules here
 ```
-
-- %První komentář kódu%
-- %Druhý komentář kódu%
-- %Třetí komentář kódu%
-
+  # make LLVM=1 M=samples/rust
+```
+- and install
+```
+  # make LLVM=1 M=samples/rust modules_install
+```
 ---
-
-<!-- Obrázek přes celý slide -->
-
-![bg](./img/image_placeholder.svg)
-
----
-
-<!-- Dva obrázky přes celý slide -->
 
 ![logo](img/edhouse_logo.png)
 
-![bg width:400px](./img/image_placeholder.svg)
-![bg height:320px](./img/image_placeholder.svg)
+## What API is available?
+
+- no_std only, hence only core and alloc crates are available
+  e.g KVec as Vec implementation, KBox as Box implementation etc.
+- kernel provides its 'kernel' crate
+  https://rust.docs.kernel.org/kernel/
+
+---
+
+## In kernel tree kind of reference drivers
+
+![logo](img/edhouse_logo.png)
+- AMCC QT2025 PHY driver -- basically part (physical) of some 10 GigE NICs
+- ASIX PHY Driver
+- DRM Panic QR code generator -- displays panic info in a form of QR
+- Null Block Driver -- minimalistic block device driver
+
+---
+
+## Out of kernel tree drivers
+
+![logo](img/edhouse_logo.png)
+
+- Android Binder driver
+- Apple AGX GPU driver -- basically Linux is not able to use GPU on modern Mx based macs unless Rust is compiled in.
+- Nova GPU driver -- free implementation of GPU driver for modern Nvidia cards
+- NVMe driver -- Samsung's work
+- PuzzleFS filesystem driver
+
+---
+
+## Questions?
+
+![logo](img/edhouse_logo.png)
